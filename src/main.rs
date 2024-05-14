@@ -27,17 +27,24 @@ fn handle_connection(mut stream: &TcpStream) {
     let (method, path) = parse_request_line(request);
 
     match method.as_str() {
-        "GET" => match path.as_str() {
-            "/" => {
-                write_response(&stream, 200);
-            }
-            _ => {
-                write_response(&stream, 404);
-            }
-        },
+        "GET" => get_path(&stream, path.as_str()),
         _ => {
-            stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
-            stream.shutdown(Shutdown::Both).unwrap()
+            response(&stream, 500);
+        }
+    }
+}
+
+fn get_path(stream: &TcpStream, path: &str) {
+    match path {
+        "/" => {
+            response(&stream, 200);
+        }
+        p if p.starts_with("/echo") => {
+            let data = p.split("/").collect::<Vec<_>>()[2];
+            response_with_data(&stream, 200, data);
+        }
+        _ => {
+            response(&stream, 404);
         }
     }
 }
@@ -53,23 +60,38 @@ fn parse_request_line(request: Cow<str>) -> (String, String) {
     (request_line[0].to_string(), request_line[1].to_string())
 }
 
-fn write_response(mut stream: &TcpStream, code: u16) {
+fn write_res_code(mut stream: &TcpStream, code: u16) {
     match code {
         200 => {
             stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
-            stream.shutdown(Shutdown::Both).unwrap()
         }
         404 => {
             stream
                 .write("HTTP/1.1 404 Not Found\r\n\r\n".as_bytes())
                 .unwrap();
-            stream.shutdown(Shutdown::Both).unwrap()
         }
         500 | _ => {
             stream
                 .write("HTTP/1.1 500 Internal Server Error\r\n\r\n".as_bytes())
                 .unwrap();
-            stream.shutdown(Shutdown::Both).unwrap()
         }
     }
+}
+
+fn response_with_data(mut stream: &TcpStream, code: u16, data: &str) {
+    write_res_code(stream, code);
+    stream
+        .write("Content-Type: text/plain\r\n".as_bytes())
+        .unwrap();
+    stream
+        .write(format!("Content-Length: {}\r\n", data.len()).as_bytes())
+        .unwrap();
+    stream.write("\r\n".as_bytes()).unwrap();
+    stream.write(data.as_bytes()).unwrap();
+    stream.shutdown(Shutdown::Both).unwrap();
+}
+
+fn response(stream: &TcpStream, code: u16) {
+    write_res_code(stream, code);
+    stream.shutdown(Shutdown::Both).unwrap();
 }
