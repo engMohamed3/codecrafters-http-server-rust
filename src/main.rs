@@ -91,7 +91,8 @@ fn response_with_data(mut stream: &TcpStream, code: u16, data: &str) {
     stream.shutdown(Shutdown::Both).unwrap();
 }
 
-fn response(stream: &TcpStream, code: u16) {
+fn response(mut stream: &TcpStream, code: u16) {
     write_res_code(stream, code);
+    stream.write("\r\n".as_bytes()).unwrap();
     stream.shutdown(Shutdown::Both).unwrap();
 }
