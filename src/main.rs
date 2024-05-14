@@ -63,16 +63,16 @@ fn parse_request_line(request: Cow<str>) -> (String, String) {
 fn write_res_code(mut stream: &TcpStream, code: u16) {
     match code {
         200 => {
-            stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
+            stream.write("HTTP/1.1 200 OK\r\n".as_bytes()).unwrap();
         }
         404 => {
             stream
-                .write("HTTP/1.1 404 Not Found\r\n\r\n".as_bytes())
+                .write("HTTP/1.1 404 Not Found\r\n".as_bytes())
                 .unwrap();
         }
         500 | _ => {
             stream
-                .write("HTTP/1.1 500 Internal Server Error\r\n\r\n".as_bytes())
+                .write("HTTP/1.1 500 Internal Server Error\r\n".as_bytes())
                 .unwrap();
         }
     }
