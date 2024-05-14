@@ -1,4 +1,5 @@
-use std::net::TcpListener;
+use std::io::Write;
+use std::net::{Shutdown, TcpListener, TcpStream};
 
 fn main() {
     println!("Logs from your program will appear here!");
@@ -6,7 +7,8 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
     for stream in listener.incoming() {
         match stream {
-            Ok(_stream) => {
+            Ok(stream) => {
+                handle_connection(stream);
                 println!("accepted new connection");
             }
             Err(e) => {
@@ -14,4 +16,9 @@ fn main() {
             }
         }
     }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
+    stream.shutdown(Shutdown::Both).unwrap()
 }
