@@ -1,24 +1,27 @@
+mod thread_pool;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 
-#[derive(Debug, PartialEq)]
+use self::thread_pool::ThreadPool;
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Method {
     GET,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Handler {
     pub handler: fn(Request, Response),
     pub path: String,
     pub method: Method,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Application {
     pub port: u16,
-    stream: Option<TcpStream>,
     handlers: Vec<Handler>,
 }
 
@@ -26,19 +29,19 @@ impl Application {
     pub fn new(port: u16) -> Application {
         Application {
             port,
-            stream: None,
             handlers: vec![],
         }
     }
 
-    pub fn listen(mut self, handler: fn(&Application)) {
+    pub fn listen(self, handler: fn(&Application)) {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).unwrap();
+        let pool = ThreadPool::new(4);
         handler(&self);
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    self.stream = Some(stream);
-                    self.route();
+                    let self_clone = self.clone();
+                    pool.execute(move || self_clone.route(stream));
                 }
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -55,13 +58,13 @@ impl Application {
         });
     }
 
-    fn route(&mut self) {
+    fn route(&self, mut stream: TcpStream) {
         let mut buf = [0; 1024];
-        self.stream.as_ref().unwrap().read(&mut buf).unwrap();
+        stream.read(&mut buf).unwrap();
 
         let (method, path) = Application::parse_request_line(&String::from_utf8_lossy(&buf[..]));
 
-        let mut response = Response::new(200, self.stream.as_mut().unwrap());
+        let mut response = Response::new(200, stream);
         match method.as_str() {
             "GET" => {
                 let request = Request::new(Method::GET, path.to_string());
@@ -151,13 +154,13 @@ impl Request {
 }
 
 #[derive(Debug)]
-pub struct Response<'a> {
+pub struct Response {
     code: u16,
-    stream: &'a mut TcpStream,
+    stream: TcpStream,
 }
 
-impl Response<'_> {
-    pub fn new(code: u16, stream: &mut TcpStream) -> Response {
+impl Response {
+    pub fn new(code: u16, stream: TcpStream) -> Response {
         Response { code, stream }
     }
 
