@@ -24,17 +24,17 @@ fn handle_connection(mut stream: &TcpStream) {
     stream.read(&mut buf).unwrap();
 
     let request = String::from_utf8_lossy(&buf[..]);
-    let (method, path) = parse_request_line(request);
+    let (method, path) = parse_request_line(&request);
 
     match method.as_str() {
-        "GET" => get_path(&stream, path.as_str()),
+        "GET" => get_path(&stream, &request, path.as_str()),
         _ => {
             response(&stream, 500);
         }
     }
 }
 
-fn get_path(stream: &TcpStream, path: &str) {
+fn get_path(stream: &TcpStream, request: &Cow<str>, path: &str) {
     match path {
         "/" => {
             response(&stream, 200);
@@ -43,13 +43,17 @@ fn get_path(stream: &TcpStream, path: &str) {
             let data = p.split("/").collect::<Vec<_>>()[2];
             response_with_data(&stream, 200, data);
         }
+        "/user-agent" => {
+            let user_agent = get_header(&request, "User-Agent");
+            response_with_data(&stream, 200, user_agent.unwrap().as_str());
+        }
         _ => {
             response(&stream, 404);
         }
     }
 }
 
-fn parse_request_line(request: Cow<str>) -> (String, String) {
+fn parse_request_line(request: &Cow<str>) -> (String, String) {
     let request_line = request
         .lines()
         .next()
@@ -58,6 +62,13 @@ fn parse_request_line(request: Cow<str>) -> (String, String) {
         .collect::<Vec<_>>();
 
     (request_line[0].to_string(), request_line[1].to_string())
+}
+
+fn get_header(request: &Cow<str>, header: &str) -> Option<String> {
+    request
+        .lines()
+        .find(|line| line.starts_with(header))
+        .map(|line| line.split(": ").collect::<Vec<_>>()[1].to_string())
 }
 
 fn write_res_code(mut stream: &TcpStream, code: u16) {
