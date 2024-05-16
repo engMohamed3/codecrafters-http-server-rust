@@ -10,7 +10,7 @@ fn main() {
 
     if args.len() > 1 {
         if args[1] == "--directory" {
-            app.static_files("/file", &args[2]);
+            app.static_files("/files", &args[2]);
         }
     }
 
