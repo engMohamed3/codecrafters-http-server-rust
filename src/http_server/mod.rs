@@ -7,16 +7,11 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 
 use self::thread_pool::ThreadPool;
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Method {
-    GET,
-}
-
 #[derive(Debug, Clone)]
 struct Handler {
     pub handler: fn(Request, Response),
     pub path: String,
-    pub method: Method,
+    pub method: String,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +49,7 @@ impl Application {
         self.handlers.push(Handler {
             path: path.to_string(),
             handler,
-            method: Method::GET,
+            method: "GET".to_string(),
         });
     }
 
@@ -62,21 +57,20 @@ impl Application {
         let mut buf = [0; 1024];
         stream.read(&mut buf).unwrap();
 
-        let (method, path) = Application::parse_request_line(&String::from_utf8_lossy(&buf[..]));
-
+        let request = Application::parse_request(&String::from_utf8_lossy(&buf[..]));
         let mut response = Response::new(200, stream);
-        match method.as_str() {
+
+        match request.method.as_str() {
             "GET" => {
-                let request = Request::new(Method::GET, path.to_string());
                 let gets = self
                     .handlers
                     .iter()
                     .enumerate()
-                    .filter(|(_, h)| h.method == Method::GET)
+                    .filter(|(_, h)| h.method == "GET".to_string())
                     .map(|(_, h)| h)
                     .collect::<Vec<_>>();
 
-                Application::router(gets, &path, request, response);
+                Application::router(gets, request, response);
             }
             _ => {
                 response.code(404).send();
@@ -84,22 +78,38 @@ impl Application {
         }
     }
 
-    fn parse_request_line(request: &Cow<str>) -> (String, String) {
-        let request_line = request
-            .lines()
-            .next()
-            .unwrap()
-            .split(" ")
-            .collect::<Vec<_>>();
+    fn parse_request(buf: &Cow<str>) -> Request {
+        let request_line = buf.lines().next().unwrap().split(" ").collect::<Vec<_>>();
+        if request_line.len() < 3 {
+            panic!("Invalid Request Line");
+        }
+        let mut headers = HashMap::new();
+        for line in buf.lines().skip(1) {
+            if line.is_empty() {
+                break;
+            }
+            match line.split(": ").collect::<Vec<&str>>().as_slice() {
+                [s1, s2] => {
+                    headers.insert(s1.to_string(), s2.to_string());
+                }
+                _ => {
+                    println!("Invalid Value for archive. line : `{}`", line);
+                }
+            }
+        }
 
-        (request_line[0].to_string(), request_line[1].to_string())
+        let method = request_line[0].to_string();
+        let path = request_line[1].to_string();
+        let protocol = request_line[2].to_string();
+
+        Request::new(method, path, protocol, headers)
     }
 
-    fn router(handlers: Vec<&Handler>, path: &str, mut request: Request, mut response: Response) {
+    fn router(handlers: Vec<&Handler>, mut request: Request, mut response: Response) {
         for hd in handlers {
             let re = Application::parse_path(&hd.path);
-            if re.is_match(&path) {
-                let captures = re.captures(&path).unwrap();
+            if re.is_match(&request.path) {
+                let captures = re.captures(&request.path).unwrap();
                 request.params = re
                     .capture_names()
                     .flatten()
@@ -136,18 +146,27 @@ impl Application {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Request {
-    pub method: Method,
+    pub method: String,
     pub path: String,
+    pub protocol: String,
+    pub headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
 }
 
 impl Request {
-    pub fn new(method: Method, path: String) -> Request {
+    pub fn new(
+        method: String,
+        path: String,
+        protocol: String,
+        headers: HashMap<String, String>,
+    ) -> Request {
         Request {
             method,
             path,
+            protocol,
+            headers,
             params: HashMap::new(),
         }
     }

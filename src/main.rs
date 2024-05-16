@@ -20,6 +20,10 @@ fn main() {
         response.send_text(&request.params["str"]);
     });
 
+    app.get("/user-agent", |req, mut res| {
+        res.send_text(&req.headers["User-Agent"]);
+    });
+
     app.listen(|app| {
         println!("Server run on port: {}", app.port);
     });
