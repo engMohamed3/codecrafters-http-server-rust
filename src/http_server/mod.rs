@@ -2,6 +2,7 @@ mod thread_pool;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 
@@ -18,6 +19,7 @@ struct Handler {
 pub struct Application {
     pub port: u16,
     handlers: Vec<Handler>,
+    static_dir: Option<String>,
 }
 
 impl Application {
@@ -25,6 +27,7 @@ impl Application {
         Application {
             port,
             handlers: vec![],
+            static_dir: None,
         }
     }
 
@@ -53,11 +56,35 @@ impl Application {
         });
     }
 
+    pub fn static_files(&mut self, path: &str, dir: &str) {
+        if self.static_dir.is_some() {
+            eprintln!("Only one static dir is allowed");
+            return;
+        }
+        let paths = fs::read_dir(dir);
+        match paths {
+            Ok(paths) => {
+                self.static_dir = Some(dir.to_string());
+                for p in paths {
+                    let p = p.unwrap().file_name().to_str().unwrap().to_string();
+                    self.get(
+                        format!("{}/{}", path, p).as_str(),
+                        Application::handle_static,
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
+        }
+    }
+
     fn route(&self, mut stream: TcpStream) {
         let mut buf = [0; 1024];
         stream.read(&mut buf).unwrap();
 
-        let request = Application::parse_request(&String::from_utf8_lossy(&buf[..]));
+        let mut request = Application::parse_request(&String::from_utf8_lossy(&buf[..]));
+        request.static_dir = self.static_dir.clone();
         let mut response = Response::new(200, stream);
 
         match request.method.as_str() {
@@ -144,6 +171,18 @@ impl Application {
         regex_str.push_str("$");
         regex::Regex::new(&regex_str).unwrap()
     }
+
+    fn handle_static(req: Request, mut res: Response) {
+        let path = format!(
+            "{}/{}",
+            req.static_dir.unwrap(),
+            req.path.split("/").last().unwrap()
+        );
+        let mut file = fs::File::open(path).unwrap();
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).unwrap();
+        res.code(200).send_binary(&buf[..]);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -153,6 +192,7 @@ pub struct Request {
     pub protocol: String,
     pub headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
+    pub static_dir: Option<String>,
 }
 
 impl Request {
@@ -168,6 +208,7 @@ impl Request {
             protocol,
             headers,
             params: HashMap::new(),
+            static_dir: None,
         }
     }
 }
@@ -204,6 +245,19 @@ impl Response {
     pub fn send(&mut self) {
         self.write_res_code();
         self.stream.write("\r\n".as_bytes()).unwrap();
+        self.stream.shutdown(Shutdown::Both).unwrap();
+    }
+
+    pub fn send_binary(&mut self, data: &[u8]) {
+        self.write_res_code();
+        self.stream
+            .write("Content-Type: application/octet-stream\r\n".as_bytes())
+            .unwrap();
+        self.stream
+            .write(format!("Content-Length: {}\r\n", data.len()).as_bytes())
+            .unwrap();
+        self.stream.write("\r\n".as_bytes()).unwrap();
+        self.stream.write(data).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
     }
 

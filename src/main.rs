@@ -5,12 +5,14 @@ use std::env;
 use crate::http_server::Application;
 
 fn main() {
-    println!("Logs from your program will appear here!");
-
     let args = env::args().collect::<Vec<String>>();
-    println!("{:?}", args);
-
     let mut app = Application::new(4221);
+
+    if args.len() > 1 {
+        if args[1] == "--directory" {
+            app.static_files("/file", &args[2]);
+        }
+    }
 
     app.get("/", |_request, mut response| {
         response.code(200).send();
