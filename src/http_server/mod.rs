@@ -11,13 +11,14 @@ use self::thread_pool::ThreadPool;
 #[derive(Debug, Clone)]
 struct Handler {
     pub handler: fn(Request, Response),
-    pub path: String,
     pub method: String,
+    regex: regex::Regex,
 }
 
 #[derive(Debug, Clone)]
 pub struct Application {
     pub port: u16,
+    pub body_limit: usize,
     handlers: Vec<Handler>,
     static_dir: Option<String>,
 }
@@ -28,6 +29,7 @@ impl Application {
             port,
             handlers: vec![],
             static_dir: None,
+            body_limit: 100 * 1024,
         }
     }
 
@@ -50,9 +52,17 @@ impl Application {
 
     pub fn get(&mut self, path: &str, handler: fn(Request, Response)) {
         self.handlers.push(Handler {
-            path: path.to_string(),
             handler,
             method: "GET".to_string(),
+            regex: Application::parse_path(path),
+        });
+    }
+
+    pub fn post(&mut self, path: &str, handler: fn(Request, Response)) {
+        self.handlers.push(Handler {
+            handler,
+            method: "POST".to_string(),
+            regex: Application::parse_path(path),
         });
     }
 
@@ -80,10 +90,10 @@ impl Application {
     }
 
     fn route(&self, mut stream: TcpStream) {
-        let mut buf = [0; 1024];
-        stream.read(&mut buf).unwrap();
+        let mut buf = vec![0; self.body_limit];
+        let read_buf = stream.read(&mut buf).unwrap();
 
-        let mut request = Application::parse_request(&String::from_utf8_lossy(&buf[..]));
+        let mut request = Application::parse_request(&String::from_utf8_lossy(&buf[..read_buf]));
         request.static_dir = self.static_dir.clone();
         let mut response = Response::new(200, stream);
 
@@ -98,6 +108,17 @@ impl Application {
                     .collect::<Vec<_>>();
 
                 Application::router(gets, request, response);
+            }
+            "POST" => {
+                let posts = self
+                    .handlers
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, h)| h.method == "POST".to_string())
+                    .map(|(_, h)| h)
+                    .collect::<Vec<_>>();
+
+                Application::router(posts, request, response);
             }
             _ => {
                 response.code(404).send();
@@ -128,16 +149,17 @@ impl Application {
         let method = request_line[0].to_string();
         let path = request_line[1].to_string();
         let protocol = request_line[2].to_string();
+        let body = Some(buf.lines().last().unwrap().as_bytes().to_vec());
 
-        Request::new(method, path, protocol, headers)
+        Request::new(method, path, protocol, headers, body)
     }
 
     fn router(handlers: Vec<&Handler>, mut request: Request, mut response: Response) {
         for hd in handlers {
-            let re = Application::parse_path(&hd.path);
-            if re.is_match(&request.path) {
-                let captures = re.captures(&request.path).unwrap();
-                request.params = re
+            if hd.regex.is_match(&request.path) {
+                let captures = hd.regex.captures(&request.path).unwrap();
+                request.params = hd
+                    .regex
                     .capture_names()
                     .flatten()
                     .filter_map(|x| Some((x.to_string(), captures.name(x)?.as_str().to_string())))
@@ -153,7 +175,7 @@ impl Application {
         let mut regex_str = "^".to_string();
         if path == "/" {
             if path.starts_with("/:") {
-                regex_str.push_str(&format!(r"/(?P<{}>\w+)", path.get(2..).unwrap()))
+                regex_str.push_str(&format!(r"/(?P<{}>.+)", path.get(2..).unwrap()))
             } else {
                 regex_str.push_str("/")
             }
@@ -161,7 +183,7 @@ impl Application {
             for str in path.split("/") {
                 if !str.is_empty() {
                     if str.starts_with(":") {
-                        regex_str.push_str(&format!(r"/(?P<{}>\w+)", str.get(1..).unwrap()))
+                        regex_str.push_str(&format!(r"/(?P<{}>.+)", str.get(1..).unwrap()))
                     } else {
                         regex_str.push_str(&format!("/{}", str))
                     }
@@ -192,6 +214,7 @@ pub struct Request {
     pub protocol: String,
     pub headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
     pub static_dir: Option<String>,
 }
 
@@ -201,6 +224,7 @@ impl Request {
         path: String,
         protocol: String,
         headers: HashMap<String, String>,
+        body: Option<Vec<u8>>,
     ) -> Request {
         Request {
             method,
@@ -208,6 +232,7 @@ impl Request {
             protocol,
             headers,
             params: HashMap::new(),
+            body,
             static_dir: None,
         }
     }
@@ -265,6 +290,9 @@ impl Response {
         match self.code {
             200 => {
                 self.stream.write("HTTP/1.1 200 OK\r\n".as_bytes()).unwrap();
+            }
+            201 => {
+                self.stream.write("HTTP/1.1 201 Created\r\n".as_bytes()).unwrap();
             }
             404 => {
                 self.stream

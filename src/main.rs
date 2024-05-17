@@ -1,6 +1,6 @@
 mod http_server;
 
-use std::env;
+use std::{env, fs, io::Write};
 
 use crate::http_server::Application;
 
@@ -16,6 +16,30 @@ fn main() {
 
     app.get("/", |_request, mut response| {
         response.code(200).send();
+    });
+
+    app.post("/echo", |request, mut response| {
+        let str = request
+            .body
+            .unwrap()
+            .iter()
+            .map(|x| *x as char)
+            .collect::<String>();
+
+        response.send_text(&str);
+    });
+
+    app.post("/files/:fileName", |request, mut response| {
+        let args = env::args().collect::<Vec<String>>();
+        if args.len() > 1 && args[1] == "--directory" {
+            let dir = &args[2];
+            let mut file =
+                fs::File::create(format!("{}/{}", dir, request.params["fileName"])).unwrap();
+            file.write_all(&request.body.unwrap()).unwrap();
+            response.code(201).send();
+        } else {
+            response.code(400).send_text("No directory provided");
+        }
     });
 
     app.get("/echo/:str", |request, mut response| {
