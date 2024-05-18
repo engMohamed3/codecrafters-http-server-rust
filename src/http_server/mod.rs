@@ -2,9 +2,9 @@ mod thread_pool;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::fs;
 
 use self::thread_pool::ThreadPool;
 
@@ -240,6 +240,16 @@ impl Request {
     pub fn get_header(&self, key: &str) -> Option<String> {
         self.headers.get(&key.to_lowercase()).map(|x| x.to_string())
     }
+    pub fn get_header_valus(&self, key: &str) -> Option<Vec<String>> {
+        self.headers
+            .get(&key.to_lowercase())
+            .map(|x| x.to_string())
+            .map(|x| {
+                x.split(",")
+                    .map(|x| x.trim().to_string())
+                    .collect::<Vec<String>>()
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -340,9 +350,12 @@ impl Response {
     }
 
     fn set_encoding(&mut self) {
-        if let Some(header) = self.request.get_header("Accept-Encoding") {
-            if ["gzip", "br"].contains(&header.as_str()) {
-                self.header(("Content-Encoding".to_string(), header));
+        if let Some(values) = self.request.get_header_valus("Accept-Encoding") {
+            for value in values {
+                if ["gzip", "br"].contains(&value.as_str()) {
+                    self.header(("Content-Encoding".to_string(), value));
+                    break;
+                }
             }
         }
     }
