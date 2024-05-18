@@ -95,7 +95,7 @@ impl Application {
 
         let mut request = Application::parse_request(&String::from_utf8_lossy(&buf[..read_buf]));
         request.static_dir = self.static_dir.clone();
-        let mut response = Response::new(200, stream);
+        let mut response = Response::new(200, stream, request.clone());
 
         match request.method.as_str() {
             "GET" => {
@@ -138,7 +138,7 @@ impl Application {
             }
             match line.split(": ").collect::<Vec<&str>>().as_slice() {
                 [s1, s2] => {
-                    headers.insert(s1.to_string(), s2.to_string());
+                    headers.insert(s1.to_string().to_lowercase(), s2.to_string());
                 }
                 _ => {
                     println!("Invalid Value for archive. line : `{}`", line);
@@ -207,12 +207,12 @@ impl Application {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Request {
     pub method: String,
     pub path: String,
     pub protocol: String,
-    pub headers: HashMap<String, String>,
+    headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
     pub body: Option<Vec<u8>>,
     pub static_dir: Option<String>,
@@ -236,17 +236,28 @@ impl Request {
             static_dir: None,
         }
     }
+
+    pub fn get_header(&self, key: &str) -> Option<String> {
+        self.headers.get(&key.to_lowercase()).map(|x| x.to_string())
+    }
 }
 
 #[derive(Debug)]
 pub struct Response {
     code: u16,
     stream: TcpStream,
+    headers: Vec<(String, String)>,
+    request: Request,
 }
 
 impl Response {
-    pub fn new(code: u16, stream: TcpStream) -> Response {
-        Response { code, stream }
+    pub fn new(code: u16, stream: TcpStream, request: Request) -> Response {
+        Response {
+            code,
+            stream,
+            headers: vec![],
+            request,
+        }
     }
 
     pub fn code(&mut self, code: u16) -> &mut Self {
@@ -254,14 +265,22 @@ impl Response {
         self
     }
 
+    pub fn header(&mut self, header: (String, String)) -> &mut Self {
+        self.headers.push(header);
+        self
+    }
+
     pub fn send_text(&mut self, data: &str) {
         self.write_res_code();
-        self.stream
-            .write("Content-Type: text/plain\r\n".as_bytes())
-            .unwrap();
-        self.stream
-            .write(format!("Content-Length: {}\r\n", data.len()).as_bytes())
-            .unwrap();
+        self.set_encoding();
+        self.header(("Content-Type".to_string(), "text/plain".to_string()))
+            .header(("Content-Length".to_string(), data.len().to_string()));
+
+        for (x, y) in self.headers.iter() {
+            self.stream
+                .write(format!("{}: {}\r\n", x, y).as_bytes())
+                .unwrap();
+        }
         self.stream.write("\r\n".as_bytes()).unwrap();
         self.stream.write(data.as_bytes()).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
@@ -269,18 +288,29 @@ impl Response {
 
     pub fn send(&mut self) {
         self.write_res_code();
+        self.set_encoding();
+        for (x, y) in self.headers.iter() {
+            self.stream
+                .write(format!("{}: {}\r\n", x, y).as_bytes())
+                .unwrap();
+        }
         self.stream.write("\r\n".as_bytes()).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
     }
 
     pub fn send_binary(&mut self, data: &[u8]) {
         self.write_res_code();
-        self.stream
-            .write("Content-Type: application/octet-stream\r\n".as_bytes())
-            .unwrap();
-        self.stream
-            .write(format!("Content-Length: {}\r\n", data.len()).as_bytes())
-            .unwrap();
+        self.set_encoding();
+        self.header((
+            "Content-Type".to_string(),
+            "application/octet-stream".to_string(),
+        ))
+        .header(("Content-Length".to_string(), data.len().to_string()));
+        for (x, y) in self.headers.iter() {
+            self.stream
+                .write(format!("{}: {}\r\n", x, y).as_bytes())
+                .unwrap();
+        }
         self.stream.write("\r\n".as_bytes()).unwrap();
         self.stream.write(data).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
@@ -292,7 +322,9 @@ impl Response {
                 self.stream.write("HTTP/1.1 200 OK\r\n".as_bytes()).unwrap();
             }
             201 => {
-                self.stream.write("HTTP/1.1 201 Created\r\n".as_bytes()).unwrap();
+                self.stream
+                    .write("HTTP/1.1 201 Created\r\n".as_bytes())
+                    .unwrap();
             }
             404 => {
                 self.stream
@@ -303,6 +335,14 @@ impl Response {
                 self.stream
                     .write("HTTP/1.1 500 Internal Server Error\r\n".as_bytes())
                     .unwrap();
+            }
+        }
+    }
+
+    fn set_encoding(&mut self) {
+        if let Some(header) = self.request.get_header("Accept-Encoding") {
+            if ["gzip", "br"].contains(&header.as_str()) {
+                self.header(("Content-Encoding".to_string(), header));
             }
         }
     }

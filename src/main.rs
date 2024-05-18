@@ -47,7 +47,7 @@ fn main() {
     });
 
     app.get("/user-agent", |req, mut res| {
-        res.send_text(&req.headers["User-Agent"]);
+        res.send_text(&req.get_header("User-Agent").unwrap());
     });
 
     app.listen(|app| {
