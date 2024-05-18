@@ -2,9 +2,12 @@ mod thread_pool;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::fs;
+
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 use self::thread_pool::ThreadPool;
 
@@ -282,7 +285,7 @@ impl Response {
 
     pub fn send_text(&mut self, data: &str) {
         self.write_res_code();
-        self.set_encoding();
+        let data = (self.set_encoding(Some(data.as_bytes()))).unwrap();
         self.header(("Content-Type".to_string(), "text/plain".to_string()))
             .header(("Content-Length".to_string(), data.len().to_string()));
 
@@ -292,13 +295,13 @@ impl Response {
                 .unwrap();
         }
         self.stream.write("\r\n".as_bytes()).unwrap();
-        self.stream.write(data.as_bytes()).unwrap();
+        self.stream.write(&data).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
     }
 
     pub fn send(&mut self) {
         self.write_res_code();
-        self.set_encoding();
+        self.set_encoding(None);
         for (x, y) in self.headers.iter() {
             self.stream
                 .write(format!("{}: {}\r\n", x, y).as_bytes())
@@ -310,7 +313,7 @@ impl Response {
 
     pub fn send_binary(&mut self, data: &[u8]) {
         self.write_res_code();
-        self.set_encoding();
+        let data = self.set_encoding(Some(data)).unwrap();
         self.header((
             "Content-Type".to_string(),
             "application/octet-stream".to_string(),
@@ -322,7 +325,7 @@ impl Response {
                 .unwrap();
         }
         self.stream.write("\r\n".as_bytes()).unwrap();
-        self.stream.write(data).unwrap();
+        self.stream.write(&data).unwrap();
         self.stream.shutdown(Shutdown::Both).unwrap();
     }
 
@@ -349,14 +352,21 @@ impl Response {
         }
     }
 
-    fn set_encoding(&mut self) {
+    fn set_encoding(&mut self, data: Option<&[u8]>) -> Option<Vec<u8>> {
         if let Some(values) = self.request.get_header_valus("Accept-Encoding") {
             for value in values {
-                if ["gzip", "br"].contains(&value.as_str()) {
+                if ["gzip"].contains(&value.as_str()) {
                     self.header(("Content-Encoding".to_string(), value));
-                    break;
+
+                    if data.is_some() {
+                        let mut e = GzEncoder::new(Vec::new(), Compression::default());
+                        e.write_all(data.unwrap()).unwrap();
+                        let compressed_bytes = Some(e.finish().unwrap());
+                        return compressed_bytes;
+                    }
                 }
             }
         }
+        data.map(|x| x.to_vec())
     }
 }
